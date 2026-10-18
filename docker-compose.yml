@@ -1,0 +1,51 @@
+# Coolify: Git application, branch selfhost, Docker Compose build pack.
+# Configure HTTPS domains for figcraft-web:8080 and figcraft-server:47900.
+# No host ports are published; Coolify's proxy handles HTTPS and WebSockets.
+services:
+  figcraft-server:
+    build:
+      context: .
+      dockerfile: deploy/coolify/Dockerfile.server
+      args:
+        CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+    environment:
+      FIGCRAFT_PUBLIC_URL: ${FIGCRAFT_PUBLIC_URL:?}
+      RUST_LOG: ${RUST_LOG:-info}
+    expose:
+      - "47900"
+    volumes:
+      - figcraft-data:/data
+    restart: unless-stopped
+    stop_grace_period: 60s
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "http://127.0.0.1:47900/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  figcraft-web:
+    build:
+      context: .
+      dockerfile: deploy/coolify/Dockerfile.web
+      args:
+        FIGCRAFT_DEFAULT_SERVER: ${FIGCRAFT_PUBLIC_URL:?}
+        CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+    expose:
+      - "8080"
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  figcraft-data:

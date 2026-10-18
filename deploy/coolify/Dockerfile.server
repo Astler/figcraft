@@ -1,0 +1,34 @@
+# syntax=docker/dockerfile:1.7
+# Build the checked-out fork, never download an upstream FigCraft binary.
+FROM rust:1.95.0-bookworm AS build
+ARG CARGO_BUILD_JOBS=2
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} CARGO_TARGET_DIR=/src/target
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,id=figcraft-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=figcraft-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=figcraft-server-target,target=/src/target,sharing=locked \
+    cargo build --release --locked -p figcraft-server \
+    && install -Dm755 /src/target/release/figcraft-server /out/figcraft-server
+
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl libgcc-s1 libstdc++6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 figcraft \
+    && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /data --shell /usr/sbin/nologin figcraft \
+    && install -d -m 0700 -o figcraft -g figcraft /data
+COPY --from=build /out/figcraft-server /usr/local/bin/figcraft-server
+COPY --chmod=0755 deploy/coolify/check-public-url.sh /usr/local/bin/figcraft-check-url
+COPY --chmod=0755 deploy/coolify/server-entrypoint.sh /usr/local/bin/figcraft-server-run
+COPY deploy/coolify/server.toml /etc/figcraft-server/server.toml
+COPY LICENSE-MIT LICENSE-APACHE NOTICE /usr/share/doc/figcraft-server/
+USER 10001:10001
+WORKDIR /data
+# These build-time checks also catch missing shared libraries or invalid TOML.
+RUN figcraft-server --version \
+    && figcraft-server --config /etc/figcraft-server/server.toml check
+EXPOSE 47900
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["figcraft-server-run"]
+CMD ["serve"]

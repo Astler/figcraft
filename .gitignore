@@ -8,3 +8,11 @@ plans/
 /log/
 .DS_Store
 *.profraw
+
+# Self-host settings and private data must never be committed.
+.env
+.env.*
+!.env.example
+/figcraft-data/
+/backups/
+__pycache__/

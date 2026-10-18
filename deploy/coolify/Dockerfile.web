@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1.7
+FROM rust:1.95.0-bookworm AS build
+ARG CARGO_BUILD_JOBS=2
+ARG TRUNK_VERSION=0.21.14
+# Match the font source pinned by upstream's v0.7.0 release workflow.
+ARG CRAFT_FONTS_REF=43913056ce82a3fdad0ef69f6b88d1dc922a8104
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} CARGO_TARGET_DIR=/src/target
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && rustup target add wasm32-unknown-unknown
+RUN --mount=type=cache,id=figcraft-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=figcraft-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    cargo install trunk --version "${TRUNK_VERSION}" --locked
+RUN git init /opt/craft-fonts \
+    && git -C /opt/craft-fonts remote add origin https://github.com/storytold/craft-fonts.git \
+    && git -C /opt/craft-fonts fetch --depth=1 origin "${CRAFT_FONTS_REF}" \
+    && git -C /opt/craft-fonts checkout --detach FETCH_HEAD \
+    && test "$(git -C /opt/craft-fonts rev-parse HEAD)" = "${CRAFT_FONTS_REF}"
+ENV CRAFT_FONTS_DIR=/opt/craft-fonts CRAFT_FONTS_REQUIRED=1
+WORKDIR /src
+COPY . .
+ARG FIGCRAFT_DEFAULT_SERVER
+ENV FIGCRAFT_DEFAULT_SERVER=${FIGCRAFT_DEFAULT_SERVER}
+RUN --mount=type=cache,id=figcraft-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=figcraft-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=figcraft-web-target,target=/src/target,sharing=locked \
+    sh deploy/coolify/check-public-url.sh "${FIGCRAFT_DEFAULT_SERVER}" \
+    && cd apps/figcraft-web \
+    && trunk build --release --locked \
+    && test -s /src/dist/web/index.html \
+    && find /src/dist/web -maxdepth 1 -name '*.wasm' -type f -size +0c | grep -q .
+# Keep notices with the served distribution, without copying standalone font files.
+RUN mkdir -p /src/dist/web/licenses/fonts \
+    && cp LICENSE-MIT LICENSE-APACHE NOTICE ATTRIBUTION.md /src/dist/web/licenses/ \
+    && cd /opt/craft-fonts \
+    && find . -type f \( -iname '*license*' -o -iname 'OFL*' -o -iname 'NOTICE*' \) \
+       -exec cp --parents '{}' /src/dist/web/licenses/fonts/ \;
+
+FROM nginx:stable-alpine
+RUN rm -rf /usr/share/nginx/html/*
+COPY deploy/coolify/nginx.conf /etc/nginx/nginx.conf
+COPY --from=build /src/dist/web/ /usr/share/nginx/html/
+USER nginx
+RUN nginx -t
+EXPOSE 8080
+STOPSIGNAL SIGQUIT
+# The upstream image's templating entrypoint is unnecessary for this fixed config.
+ENTRYPOINT ["nginx"]
+CMD ["-g", "daemon off;"]

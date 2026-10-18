@@ -1,0 +1,10 @@
+# Public URL is supplied by figcraft-server-run from Coolify's environment.
+listen = "0.0.0.0:47900"
+data = "/data"
+
+# Only holders of the server key may create files. Document links grant access.
+open_publish = false
+# Leave room below the client's 64 MiB message ceiling for protocol overhead.
+max_file_mb = 32
+# Do not expire stored files; backups remain the operator's responsibility.
+idle_days = 0
